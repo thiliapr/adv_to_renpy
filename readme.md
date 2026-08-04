@@ -16,7 +16,7 @@ thiliapr/adv_to_renpy 是自由软件(Free as in Freedom)，遵循 [Affero GNU �
 
 ### 快速使用
 1. 准备一个 ADVPlayer 引擎的游戏，这里以[華は短し、踊れよ乙女](https://www.ensemble-game.com/28.hanaoto/)为例子，将游戏路径记为`game_path`，此时`game_path`应该呈现如此文件结构:  
-  - game_name
+  - hanaoto
     - AdvHD.exe
     - AdvHDLang.dll
     - Bgm.arc
@@ -25,7 +25,7 @@ thiliapr/adv_to_renpy 是自由软件(Free as in Freedom)，遵循 [Affero GNU �
     - Se.arc
     - Voice.arc
 2. 用[Ren'Py SDK](https://www.renpy.org/latest.html)创建一个项目，记下它的路径，记为`project_path`，此时`project_path`应该呈现如此文件结构:  
-   - project_name
+   - project
      - game
        - audio
        - gui
