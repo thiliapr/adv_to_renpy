@@ -89,7 +89,7 @@ def remove_non_exist_background(article: Article, images_dir: list[str]) -> Arti
 # 主程序
 def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("game_dir", type=pathlib.Path, help="游戏主目录，脚本放置在 ${game_dir}/script 下")
+    parser.add_argument("script_dir", type=pathlib.Path, help="游戏脚本目录，里面储存着一堆 .ws2 脚本")
     parser.add_argument("entry_script", help="入口脚本，比如 CO_1_1")
     parser.add_argument("project_dir", type=pathlib.Path, help="输出 Ren'Py 游戏文件夹")
     parser.add_argument("-e", "--encoding", default="cp932", help="WS2 脚本使用的文本编码，默认为 %(default)s")
@@ -118,7 +118,7 @@ def main(args: argparse.Namespace):
     while (remaining_scripts := scripts_to_convert - converted_scripts):
         # 获取当前要处理的脚本
         current_script = remaining_scripts.pop()
-        script_path = args.game_dir / f"script/{current_script}.ws2"
+        script_path = args.script_dir / f"script/{current_script}.ws2"
         if not script_path.exists():
             print(f"[Warning] 未找到脚本: {script_path}")
             converted_scripts.add(current_script)

@@ -15,7 +15,7 @@ thiliapr/adv_to_renpy 是自由软件(Free as in Freedom)，遵循 [Affero GNU �
 - `convert_script.py`: 将`.ws2`文件转换为 Ren'Py 脚本
 
 ### 快速使用
-1. 准备一个 ADVPlayer 引擎的游戏，这里以[華は短し、踊れよ乙女](https://www.ensemble-game.com/28.hanaoto/)为例子，将游戏路径记为`game_path`，此时`game_path`应该呈现如此文件结构:  
+1. 准备一个 ADVPlayer 引擎的游戏，这里以[華は短し、踊れよ乙女](https://www.ensemble-game.com/28.hanaoto/)为例子，游戏文件夹应该呈现如此结构:  
   - hanaoto
     - AdvHD.exe
     - AdvHDLang.dll
@@ -24,7 +24,7 @@ thiliapr/adv_to_renpy 是自由软件(Free as in Freedom)，遵循 [Affero GNU �
     - Rio1.arc
     - Se.arc
     - Voice.arc
-2. 用[Ren'Py SDK](https://www.renpy.org/latest.html)创建一个项目，记下它的路径，记为`project_path`，此时`project_path`应该呈现如此文件结构:  
+2. 用[Ren'Py SDK](https://www.renpy.org/latest.html)创建一个项目，记下它的路径，记为`project_dir`，此时文件夹应该呈现如此结构:  
    - project
      - game
        - audio
@@ -33,10 +33,11 @@ thiliapr/adv_to_renpy 是自由软件(Free as in Freedom)，遵循 [Affero GNU �
        - script.rpy
      - .gitignore
      - log.txt
-3. 将`Bgm.arc`提取到`${project_path}/game/audio/bgm/`，将储存 CG 图片的`ChipN.arc`提取到`${project_path}/game/images/`，将储存语音的`Voice.arc`提取到`${project_path}/game/audio/voice/`，将储存音效的`Se.arc`提取到`${project_path}/game/audio/se/`。我使用[GARbro](https://github.com/morkt/GARbro)提取游戏资源。
-4. 创建文件夹`ws2_script`，将`RioN.arc`的脚本提取到该文件夹中。
-5. 找到`ws2_script`文件夹中的入口脚本文件，比如`CO_1_1`，记为`entry_script`
-6. 运行`python convert_script.py $game_dir $entry_script $project_path --encoding utf-8 -only-exist-background`
+3. 将游戏文件夹的`Bgm.arc`提取到`${project_dir}/game/audio/bgm/`，将储存 CG 图片的`ChipN.arc`提取到`${project_dir}/game/images/`，将储存语音的`Voice.arc`提取到`${project_dir}/game/audio/voice/`，将储存音效的`Se.arc`提取到`${project_dir}/game/audio/se/`。我使用[GARbro](https://github.com/morkt/GARbro)提取游戏资源。
+4. 创建一个专门储存脚本的文件夹，记为`script_dir`，将游戏文件夹的`RioN.arc`的脚本提取到该文件夹中。
+5. 找到`script_dir`中的入口脚本文件，比如`CO_1_1`，记为`entry_script`
+6. 运行`python convert_script.py $script_dir $entry_script $project_dir --encoding utf-8 -only-exist-background`
+   > `--encoding utf-8`需要根据游戏编码尝试，比如日文游戏常用`cp932`，汉化脚本常用`utf-8`。如果不确定就尝试`cp932`，如果报错再尝试其他编码
 
 ## 私货
 - plz，看看这些文章
