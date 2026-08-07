@@ -40,10 +40,11 @@ def convert_operation_to_ast(operation: ws2.AbstractOperation) -> ast.Sentence:
 
 
 # 一堆过滤器
-Article = list[tuple[ws2.Pointer, ast.Sentence]]
+SentenceArticle = list[tuple[ws2.Pointer, ast.Sentence]]
+ParagraphArticle = list[tuple[ws2.Pointer, list[ast.Sentence]]]
 
 
-def decide_skip_condition(article: Article) -> Article:
+def decide_skip_condition(article: SentenceArticle) -> SentenceArticle:
     new_article = []
     is_last_func_get_msg_skip = False
 
@@ -63,7 +64,7 @@ def decide_skip_condition(article: Article) -> Article:
     return new_article
 
 
-def merge_message_name_display(article: Article) -> Article:
+def merge_message_name_display(article: SentenceArticle) -> SentenceArticle:
     new_article = []
     last_display_name = ""
     for pointer, sentence in article:
@@ -77,13 +78,55 @@ def merge_message_name_display(article: Article) -> Article:
     return new_article
 
 
-def remove_non_exist_background(article: Article, images_dir: list[str]) -> Article:
+def remove_non_exist_background(article: SentenceArticle, images_dir: list[str]) -> SentenceArticle:
     new_article = []
     for pointer, sentence in article:
         if isinstance(sentence, ast.SetBackground) and not (images_dir / sentence.file).exists():
             continue
         new_article.append((pointer, sentence))
     return new_article
+
+
+# 写成 Ren'Py 脚本
+def convert_ast_to_renpy(current_script: str, article: SentenceArticle) -> str:
+    # 记录可能会被跳转到的指针
+    pointers_may_jump_to = {article[0][0]}  # 第一个指针是这个脚本的入口，script__start 会跳转到这个入口
+    for pointer, sentence in article:
+        if isinstance(sentence, ast.Jump):
+            pointers_may_jump_to.add(sentence.pointer)
+        elif isinstance(sentence, ast.Menu):
+            for choice in sentence.operation.choices:
+                if isinstance(choice, ws2.ShowChoice.ChoicePointer):
+                    pointers_may_jump_to.add(choice.pointer)
+        elif isinstance(sentence, ast.UnknownSentence):
+            if isinstance(sentence.operation, (ws2.Jump1, ws2.Jump2)):
+                pointers_may_jump_to.add(sentence.operation.pointer)
+            elif isinstance(sentence.operation, (ws2.ConditionLong, ws2.ConditionalJump)):
+                pointers_may_jump_to.add(sentence.operation.pointer1)
+                pointers_may_jump_to.add(sentence.operation.pointer2)
+
+    # 合并没有被跳转到的单行指令成为一个连续的段落
+    new_article: ParagraphArticle = []
+    for pointer, sentence in article:
+        if pointer in pointers_may_jump_to:
+            new_article.append((pointer, [sentence]))
+            continue
+        new_article[-1][1].append(sentence)
+
+    # 编译句子
+    environment = ast.ASTCompileEnvironment(
+        available_pointers=list(zip(*article))[0],
+        script_name=current_script
+    )
+    new_article = [(pointer, [sentence.compile(environment) for sentence in sentences]) for pointer, sentences in new_article]
+
+    # 写成 Ren'Py 脚本
+    script = ""
+    for pointer, sentences in new_article:
+        script += f"label {current_script}__pointer_{pointer}:\n"
+        for sentence in sentences:
+            script += "\n".join(f"    {line}" for line in sentence.splitlines()) + "\n"
+    return script
 
 
 # 主程序
@@ -119,7 +162,7 @@ def main(args: argparse.Namespace):
     while (remaining_scripts := scripts_to_convert - converted_scripts):
         # 获取当前要处理的脚本
         current_script = remaining_scripts.pop()
-        script_path = args.script_dir / f"script/{current_script}.ws2"
+        script_path = args.script_dir / f"{current_script}.ws2"
         if not script_path.exists():
             print(f"[Warning] 未找到脚本: {script_path}")
             converted_scripts.add(current_script)
@@ -157,26 +200,10 @@ def main(args: argparse.Namespace):
                     if isinstance(choice, ws2.ShowChoice.ChoiceFile):
                         scripts_to_convert.add(choice.file)
 
-        # 编译句子
-        environment = ast.ASTCompileEnvironment(
-            available_pointers=list(zip(*article))[0],
-            script_name=current_script
-        )
-        article = [(pointer, sentence.compile(environment)) for pointer, sentence in article]
-
-        # 写入文件
-        append_content = []
-        if current_script == args.entry_script:
-            append_content.append(f"label start:\n    jump {current_script}__start\n")
-        append_content.append(f"label {current_script}__start:\n    jump {current_script}__pointer_{article[0][0]}\n")
-        append_content.extend(
-            f"label {current_script}__pointer_{pointer}:\n" + "\n".join(f"    {line}" for line in sentence.splitlines()) + "\n"
-            for pointer, sentence in article
-        )
-        append_content = "".join(append_content)
-
+        # 将句子组成段落并编译成 Ren'Py 脚本，写入文件
+        script = convert_ast_to_renpy(current_script, article)
         with open(renpy_script_path, "a", encoding="utf-8") as f:
-            f.write(append_content)
+            f.write(script)
 
         # 添加到已转换脚本集合
         converted_scripts.add(current_script)

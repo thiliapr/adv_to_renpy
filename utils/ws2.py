@@ -146,8 +146,8 @@ class ConditionLong(DeclarativeOperation):
     config: int
     scalar_id: int = Field(description="要比较的变量的 ID")
     compare_value: float = Field(description="要和变量比较的数")
-    pointer1: Pointer = Field(description="结果为真的跳转指针，为 0 则不跳转")
-    pointer2: Pointer = Field(description="结果为假的跳转指针，为 0 则不跳转")
+    pointer1: Pointer = Field(description="不同 config 有不同行为的指针，我也不知道它干啥的")
+    pointer2: Pointer = Field(description="不同 config 有不同行为的指针，我也不知道它干啥的")
 
     def payload_schema(env: ProgramDecompileEnvironment) -> Struct:
         return Struct(
