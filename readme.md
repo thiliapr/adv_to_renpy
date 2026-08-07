@@ -39,6 +39,75 @@ thiliapr/adv_to_renpy 是自由软件(Free as in Freedom)，遵循 [Affero GNU �
 6. 运行`python convert_script.py $script_dir $entry_script $project_dir --encoding utf-8 -only-exist-background`
    > `--encoding utf-8`需要根据游戏编码尝试，比如日文游戏常用`cp932`，汉化脚本常用`utf-8`。如果不确定就尝试`cp932`，如果报错再尝试其他编码
 
+## FAQ
+### 未知 Operation
+遇到未知的 Operation 时，调试查看 Operation 的结构，在`utils/ws2.py`模仿`register_operation_parse_function`注册一个占位符 Operation，以下是一个例子，供参考:  
+1. 运行
+   ```bash
+   convert_script.py -e utf-8 example/zh_CN CO_1_1 hanaoto -o tmp.rpy
+   ```
+2. 遇到未知的 OPCode 0x99，进入调试模式
+   ```
+   [Info] ADVPlayer Game to Ren'Py Game - ADVPlayer 游戏到 Ren'Py 游戏转换器
+   [Info] Copyright (C) 2026 thiliapr <thiliapr@tutanota.com>
+   [Info] 本脚本是 thiliapr/adv_to_renpy 的一部分，是一个自由软件，遵循 GNU AGPL v3 or later 进行分发
+   [Info] thiliapr/adv_to_renpy 不提供任何保障，甚至连可销售和符合某个特定的目的都不保证
+   [Info] 您应该已收到一份 AGPL 副本。如果没有，请访问 https://www.gnu.org/licenses/agpl.html
+   
+   + - + - + - + - + - Debug Mode - + - + - + - + - +
+   存在不认识的 OPCode: 0x99
+   ptr=171, char='\x99', hex=0x99, op=Invaild, str=StringError("cannot use encoding 'utf-8' to decode b'\\x99effect01'"), int=1717986713,    float=272004609255837716709376.00000
+   q to quit:
+   ```
+3. 回车进入下一个字节，发现有一个字符串
+   ```
+   q to quit:
+   ptr=172, char='e', hex=0x65, op=Unknown, str='effect01', int=1701209701, float=68002071048283412758528.00000
+   q to quit:
+   ptr=173, char='f', hex=0x66, op=ShowGraphic(file='fect01'), str='ffect01', int=1667589734, float=4231682977918980456448.00000
+   q to quit:
+   ptr=174, char='f', hex=0x66, op=ShowGraphic(file='ect01'), str='fect01', int=1952671078, float=72064696748654244711405998571520.00000
+   q to quit:
+   ptr=175, char='e', hex=0x65, op=Unknown, str='ect01', int=812933989, float=0.00000
+   q to quit:
+   ptr=176, char='c', hex=0x63, op=Invaild, str='ct01', int=825259107, float=0.00000
+   q to quit:
+   ptr=177, char='t', hex=0x74, op=Invaild, str='t01', int=3223668, float=0.00000
+   q to quit:
+   ptr=178, char='0', hex=0x30, op=Invaild, str='01', int=12592, float=0.00000
+   q to quit:
+   ptr=179, char='1', hex=0x31, op=Invaild, str='1', int=49, float=0.00000
+   q to quit:
+   ptr=180, char='\x00', hex=0x00, op=Unknown, str='', int=33554432, float=0.00000
+   q to quit:
+   ```
+3. 继续回车，发现在 7 个字节后(ptr=188)时遇到了一个合理的 Operation
+   ```
+   ptr=181, char='\x00', hex=0x00, op=Unknown, str='', int=131072, float=0.00000
+   q to quit:
+   ptr=182, char='\x00', hex=0x00, op=Unknown, str='', int=512, float=0.00000
+   q to quit:
+   ptr=183, char='\x02', hex=0x02, op=Jump2(pointer=6553600), str='\x02', int=1677721602, float=9444735217539104112640.00000
+   q to quit:
+   ptr=184, char='\x00', hex=0x00, op=Unknown, str='', int=6553600, float=0.00000
+   q to quit:
+   ptr=185, char='\x00', hex=0x00, op=Unknown, str='', int=855663616, float=0.00000
+   q to quit:
+   ptr=186, char='d', hex=0x64, op=Unknown, str='d', int=1932722276, float=14181961982635277892161837727744.00000
+   q to quit:
+   ptr=187, char='\x00', hex=0x00, op=Unknown, str='', int=1953706752, float=77072908905868490534944575062016.00000
+   q to quit:
+   ptr=188, char='3', hex=0x33, op=SetBackground(channel='st01', file='EF_WHITE.PNG'), str='3st01', int=812938035, float=0.00000
+   ```
+4. 结合上面的经历，可以认为整个 0x99 Operation 的结构就是: 一个字符串 + 7 个字节的未知数据
+5. 在`utils/ws2.py`追加以下内容
+   ```python
+   register_operation_parse_function(0x99, lambda env: Struct(
+       CStringEncoding(env.encoding),
+       Bytes(7)
+   ))
+   ```
+
 ## 私货
 - plz，看看这些文章
   - [Tivoization（硬件自锁技术）](https://www.gnu.org/philosophy/tivoization.html)

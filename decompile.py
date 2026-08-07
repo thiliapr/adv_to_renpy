@@ -57,7 +57,7 @@ def debug_program(context: ProgramDecompileContext):
         info[type_name] = value
 
     # 显示所有可能
-    print(", ".join(f"{k}={v}" for k, v in info.items()))
+    print(", ".join(f"{k}={v}" for k, v in info.items()), file=sys.stderr)
 
 
 def decompile_script(script: bytes, environment: ProgramDecompileEnvironment) -> Iterator[tuple[Pointer, OperationCode, AbstractOperation | None]]:
@@ -72,6 +72,7 @@ def decompile_script(script: bytes, environment: ProgramDecompileEnvironment) ->
         operation_code = context.program[context.current_pointer]
         if operation_code not in CodeToOperation:
             print("+ - " * 5 + "Debug Mode" + " - +" * 5, file=sys.stderr)
+            print("存在不认识的 OPCode: " + hex(operation_code), file=sys.stderr)
             while input("q to quit: ") != "q":
                 debug_program(context)
                 context.current_pointer += 1
