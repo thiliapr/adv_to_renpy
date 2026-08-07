@@ -37,9 +37,14 @@ thiliapr/adv_to_renpy 是自由软件(Free as in Freedom)，遵循 [Affero GNU �
 4. 创建一个专门储存脚本的文件夹，记为`script_dir`，将游戏文件夹的`RioN.arc`的脚本提取到该文件夹中。
 5. 找到`script_dir`中的入口脚本文件，比如`CO_1_1`，记为`entry_script`
 6. 运行`python convert_script.py $script_dir $entry_script $project_dir --encoding utf-8 -only-exist-background`
-   > `--encoding utf-8`需要根据游戏编码尝试，比如日文游戏常用`cp932`，汉化脚本常用`utf-8`。如果不确定就尝试`cp932`，如果报错再尝试其他编码
 
 ## FAQ
+### 编码错误
+如果程序抛出`construct.core.StringError`，那大概是因为程序的参数`--encoding`设置错误。你可以依次尝试以下编码，看看哪个可以正常解析脚本:
+- cp932
+- utf-8
+- cp936
+
 ### 未知 Operation
 遇到未知的 Operation 时，调试查看 Operation 的结构，在`utils/ws2.py`模仿`register_operation_parse_function`注册一个占位符 Operation，以下是一个例子，供参考:  
 1. 运行
