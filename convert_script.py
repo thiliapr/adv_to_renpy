@@ -95,6 +95,7 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-e", "--encoding", default="cp932", help="WS2 脚本使用的文本编码，默认为 %(default)s")
     parser.add_argument("-v", "--version", type=int, nargs=4, default=(1, 9, 9, 9), metavar=("MAJOR", "MINOR", "PATCH", "BUILD"), help="程序解译环境的版本号，默认为 %(default)s")
     parser.add_argument("-b", "--only-exist-background", action="store_true", help="只使用游戏目录存在的背景")
+    parser.add_argument("-o", "--output-script-path", type=pathlib.Path, help="如果指定，则将脚本输出到指定路径，而不是默认的 ${project_dir}/game/script.rpy")
     return parser.parse_args(args)
 
 
@@ -108,7 +109,7 @@ def main(args: argparse.Namespace):
     print()
 
     # 初始化游戏脚本
-    renpy_script_path = args.project_dir / "game/script.rpy"
+    renpy_script_path = args.output_script_path or (args.project_dir / "game/script.rpy")
     renpy_script_path.write_text("define config.old_substitutions = False\ndefine config.safe_text = True\n", encoding="utf-8")
 
     # 从入口脚本开始读取脚本
