@@ -20,7 +20,7 @@ from construct import Array, Bytes, CString, Const, GreedyBytes, NullTerminated,
 Pointer = Annotated[int, Field(ge=0)]
 OperationCode = Annotated[int, Field(ge=0, le=255)]
 OperationParseFunction = Callable[["ProgramDecompileContext"], "OperationDecompileResult"]
-GetSchemeFunction = Callable[["ProgramDecompileContext"], Struct]
+GetSchemeFunction = Callable[["ProgramDecompileEnvironment"], Struct]
 
 
 class ProgramDecompileEnvironment(BaseModel):
