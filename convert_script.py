@@ -16,6 +16,8 @@ from utils import ast, ws2
 
 # 转换 Operation 到 Ren'Py 指令
 def convert_operation_to_ast(operation: ws2.AbstractOperation) -> ast.Sentence:
+    if isinstance(operation, (ws2.Jump1, ws2.Jump2)):
+        return ast.Jump(pointer=operation.pointer)
     if isinstance(operation, ws2.NextFile):
         return ast.NextFile(file=operation.file)
     if isinstance(operation, ws2.ShowChoice):
@@ -39,52 +41,128 @@ def convert_operation_to_ast(operation: ws2.AbstractOperation) -> ast.Sentence:
         return ast.UnknownSentence(operation=operation)
 
 
-# 一堆过滤器
+# 辅助工具
 SentenceArticle = list[tuple[ws2.Pointer, ast.Sentence]]
 ParagraphArticle = list[tuple[ws2.Pointer, list[ast.Sentence]]]
 
+class ArticleFilter:
+    @staticmethod
+    def get_real_pointer(article: SentenceArticle, pointer: ws2.Pointer) -> ws2.Pointer:
+        return ast.JumpPointer(target_pointer=pointer).compile(ast.ASTCompileEnvironment(available_pointers=list(zip(*article))[0], script_name="thread_jump"))
 
-def decide_skip_condition(article: SentenceArticle) -> SentenceArticle:
-    new_article = []
-    is_last_func_get_msg_skip = False
+    @staticmethod
+    def decide_skip_condition(article: SentenceArticle) -> SentenceArticle:
+        new_article = []
+        is_last_func_get_msg_skip = False
 
-    for pointer, sentence in article:
-        if is_last_func_get_msg_skip and isinstance(sentence, ast.UnknownSentence) and isinstance(sentence.operation, ws2.ConditionLong) and sentence.operation.config == 2 and sentence.operation.scalar_id == 999 and sentence.operation.compare_value == 1:
-            # 如果分支条件是 正常模式 和 Skip 模式，那么决定正常模式
-            sentence = ast.Jump(pointer=sentence.operation.pointer1)
-        elif isinstance(sentence, ast.UnknownSentence) and isinstance(sentence.operation, ws2.ExecuteFunction):
-            if sentence.operation.function == "GetMsgSkip":
-                # 如果是 GetMsgSkip，不计入句子
-                is_last_func_get_msg_skip = True
+        for pointer, sentence in article:
+            if is_last_func_get_msg_skip and isinstance(sentence, ast.UnknownSentence) and isinstance(sentence.operation, ws2.ConditionLong) and sentence.operation.config == 2 and sentence.operation.scalar_id == 999 and sentence.operation.compare_value == 1:
+                # 如果分支条件是 正常模式 和 Skip 模式，那么决定正常模式
+                sentence = ast.Jump(pointer=sentence.operation.pointer1)
+            elif isinstance(sentence, ast.UnknownSentence) and isinstance(sentence.operation, ws2.ExecuteFunction):
+                if sentence.operation.function == "GetMsgSkip":
+                    # 如果是 GetMsgSkip，不计入句子
+                    is_last_func_get_msg_skip = True
+                    continue
+                is_last_func_get_msg_skip = False
+
+            new_article.append((pointer, sentence))
+
+        return new_article
+
+    @staticmethod
+    def merge_message_name_display(article: SentenceArticle) -> SentenceArticle:
+        new_article = []
+        last_display_name = ""
+        for pointer, sentence in article:
+            if isinstance(sentence, ast.SetDisplayName):
+                # 合并设定显示名称和显示消息
+                last_display_name = sentence.character_name
                 continue
-            is_last_func_get_msg_skip = False
+            if isinstance(sentence, ast.DisplayMessage):
+                sentence = ast.DisplayMessage(character_name=f'"{last_display_name}"' if last_display_name else "", message=sentence.message)
+            new_article.append((pointer, sentence))
+        return new_article
 
-        new_article.append((pointer, sentence))
+    @staticmethod
+    def remove_non_exist_background(article: SentenceArticle, images_dir: list[str]) -> SentenceArticle:
+        new_article = []
+        for pointer, sentence in article:
+            if isinstance(sentence, ast.SetBackground) and not (images_dir / sentence.file).exists():
+                continue
+            new_article.append((pointer, sentence))
+        return new_article
 
-    return new_article
+    @staticmethod
+    def remove_jump_to_next_pointer(article: SentenceArticle) -> SentenceArticle:
+        """
+        删除类似:
+        #0 jump 1
+        #1 func
+        这种无意义的跳转，因为程序会自动顺序执行下一条指令
+        """
+        new_article = []
+        for index, (pointer, sentence) in enumerate(article):
+            if isinstance(sentence, ast.Jump) and index + 1 < len(article) and article[index + 1][0] == ArticleFilter.get_real_pointer(article, sentence.pointer):
+                continue
+            new_article.append((pointer, sentence))
+        return new_article
 
+    @staticmethod
+    def clean_dead_code(article: SentenceArticle) -> SentenceArticle:
+        pointer_to_index = {pointer: index for index, (pointer, _) in enumerate(article)}
+        def walk(pointer: ws2.Pointer, walked_pointer: set[ws2.Pointer]):
+            """
+            按照控制流跑一遍程序
 
-def merge_message_name_display(article: SentenceArticle) -> SentenceArticle:
-    new_article = []
-    last_display_name = ""
-    for pointer, sentence in article:
-        if isinstance(sentence, ast.SetDisplayName):
-            # 合并设定显示名称和显示消息
-            last_display_name = sentence.character_name
-            continue
-        if isinstance(sentence, ast.DisplayMessage):
-            sentence = ast.DisplayMessage(character_name=f'"{last_display_name}"' if last_display_name else "", message=sentence.message)
-        new_article.append((pointer, sentence))
-    return new_article
+            Args:
+                从哪里开始跑、走过的指针
+            """
+            try:
+                if (pointer := ArticleFilter.get_real_pointer(article, pointer)) in walked_pointer:
+                    return
+            except ValueError:
+                return
 
+            # 按照指令跑一下程序
+            index = pointer_to_index[pointer]
+            while index < len(article):
+                pointer, sentence = article[index]
+                walked_pointer.add(pointer)
 
-def remove_non_exist_background(article: SentenceArticle, images_dir: list[str]) -> SentenceArticle:
-    new_article = []
-    for pointer, sentence in article:
-        if isinstance(sentence, ast.SetBackground) and not (images_dir / sentence.file).exists():
-            continue
-        new_article.append((pointer, sentence))
-    return new_article
+                # 如果是无条件跳转，跳转到指定位置
+                if isinstance(sentence, ast.Jump):
+                    index = pointer_to_index[ArticleFilter.get_real_pointer(article, sentence.pointer)]
+                    continue
+                if isinstance(sentence, ast.NextFile):
+                    break
+
+                # 有条件跳转时，分出 3 条路。ConditionLong 有可能不跳转，所以现在继续走吧
+                if isinstance(sentence, ast.UnknownSentence) and isinstance(sentence.operation, (ws2.ConditionLong, ws2.ConditionalJump)):
+                    walk(sentence.operation.pointer1, walked_pointer)
+                    walk(sentence.operation.pointer2, walked_pointer)
+
+                # 如果是菜单，分出 N 条路。ShowChoice 肯定跳到不知到哪里去，现在别走了
+                if isinstance(sentence, ast.Menu):
+                    for choice in sentence.operation.choices:
+                        if isinstance(choice, ws2.ShowChoice.ChoicePointer):
+                            walk(choice.pointer, walked_pointer)
+                    break
+
+                # 下一条指令
+                index += 1
+
+        # 按照控制流跑一遍程序
+        walked_pointer = set()
+        walk(article[0][0], walked_pointer)
+
+        # 过滤掉死代码（没有跑过的指针）
+        new_article = []
+        for pointer, sentence in article:
+            if pointer not in walked_pointer:
+                continue
+            new_article.append((pointer, sentence))
+        return new_article
 
 
 # 写成 Ren'Py 脚本
@@ -121,7 +199,7 @@ def convert_ast_to_renpy(current_script: str, article: SentenceArticle) -> str:
     new_article = [(pointer, [sentence.compile(environment) for sentence in sentences]) for pointer, sentences in new_article]
 
     # 写成 Ren'Py 脚本
-    script = ""
+    script = f"label {current_script}__start:\n    jump {current_script}__pointer_{article[0][0]}\n"
     for pointer, sentences in new_article:
         script += f"label {current_script}__pointer_{pointer}:\n"
         for sentence in sentences:
@@ -183,13 +261,19 @@ def main(args: argparse.Namespace):
         ]
 
         # 处理在 skip 和正常模式下的分支，采用正常模式
-        article = decide_skip_condition(article)
+        article = ArticleFilter.decide_skip_condition(article)
 
         # 合并显示名称和消息
-        article = merge_message_name_display(article)
+        article = ArticleFilter.merge_message_name_display(article)
 
         # 删除不存在的背景切换指令
-        article = remove_non_exist_background(article, args.project_dir / "game/images")
+        article = ArticleFilter.remove_non_exist_background(article, args.project_dir / "game/images")
+
+        # 删除死代码
+        article = ArticleFilter.clean_dead_code(article)
+
+        # 删除无意义的跳转
+        article = ArticleFilter.remove_jump_to_next_pointer(article)
 
         # 添加涉及到的脚本到待解析列表
         for _, sentence in article:
