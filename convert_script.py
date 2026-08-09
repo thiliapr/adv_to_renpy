@@ -204,6 +204,7 @@ def convert_ast_to_renpy(current_script: str, article: SentenceArticle) -> str:
         script += f"label {current_script}__pointer_{pointer}:\n"
         for sentence in sentences:
             script += "\n".join(f"    {line}" for line in sentence.splitlines()) + "\n"
+        script += "\n"
     return script
 
 
@@ -231,7 +232,7 @@ def main(args: argparse.Namespace):
 
     # 初始化游戏脚本
     renpy_script_path = args.output_script_path or (args.project_dir / "game/script.rpy")
-    renpy_script_path.write_text("define config.old_substitutions = False\ndefine config.safe_text = True\n", encoding="utf-8")
+    renpy_script_path.write_text(f"define config.old_substitutions = False\ndefine config.safe_text = True\n\nlabel start:\n    jump {args.entry_script}__start", encoding="utf-8")
 
     # 从入口脚本开始读取脚本
     scripts_to_convert: set[str] = {args.entry_script}
