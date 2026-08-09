@@ -22,8 +22,8 @@ def convert_operation_to_ast(operation: ws2.AbstractOperation) -> ast.Sentence:
         return ast.NextFile(file=operation.file)
     if isinstance(operation, ws2.ShowChoice):
         return ast.Menu(operation=operation)
-    if isinstance(operation, ws2.DisplayMessage):
-        return ast.DisplayMessage(message=operation.message.removesuffix("%K%P").replace("%K", "{w}"))
+    if isinstance(operation, ws2.DisplayMessage) and (message := operation.message.removesuffix("%K%P").replace("%P", "").replace("%K", "{w}")):
+        return ast.DisplayMessage(message=message)
     if isinstance(operation, ws2.SetDisplayName):
         return ast.SetDisplayName(character_name=operation.character_name.removeprefix("%LC"))
     if isinstance(operation, ws2.PlayMusic):
