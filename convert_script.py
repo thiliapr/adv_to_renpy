@@ -281,9 +281,10 @@ def main(args: argparse.Namespace):
         current_script = remaining_scripts.pop()
         script_path = args.script_dir / f"{current_script}.ws2"
 
-        # 如果脚本不存在，则跳过
+        # 如果脚本不存在，则跳过并更新进度条
         if not script_path.exists():
             missing_scripts.add(current_script)
+            progress_bar.total = len(scripts_to_convert - missing_scripts)
             continue
 
         # 将脚本解析成一系列操作
