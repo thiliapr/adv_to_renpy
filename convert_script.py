@@ -8,10 +8,42 @@
 # 发布 thiliapr/adv_to_renpy 是希望它能有用，但是并无保障，甚至连可销售和符合某个特定的目的都不保证。请参看 GNU Affero 通用公共许可证以了解详情。
 # 你应该随程序获得一份 GNU Affero 通用公共许可证的复本。如果没有，请看 <https://www.gnu.org/licenses/agpl.html>。
 
+import re
 import pathlib
 import argparse
+from tqdm import tqdm
 from decompile import decompile_script
 from utils import ast, ws2
+
+
+# 脚本常量
+SCRIPT_START = """
+define config.old_substitutions = False
+define config.safe_text = True
+
+init python:
+    style.default.ruby_style.yoffset = -28
+
+    def dot_tag(tag, argument, contents):
+        rv = []
+        for kind, text in contents:
+            if kind != renpy.TEXT_TEXT:
+                rv.append((kind, text))
+                continue
+            for char in text:
+                rv.extend([(renpy.TEXT_TAG, "rb"), (renpy.TEXT_TEXT, char), (renpy.TEXT_TAG, "/rb"), (renpy.TEXT_TAG, "rt"), (renpy.TEXT_TEXT, "•"), (renpy.TEXT_TAG, "/rt")])
+        return rv
+    config.custom_text_tags["dot"] = dot_tag
+
+label start:
+    jump {entry_script}__start
+""".strip() + "\n\n"
+SCRIPT_BLOCK = """
+label {current_script}__start:
+    jump {current_script}__pointer_{start_pointer}
+""".strip() + "\n\n"
+HIGHLIGHT_TEXT_EXPRESSION = re.compile(r"%XS\d\d(.+)?%XE")
+DOT_TEXT_EXPRESSION = re.compile(r"{(.+)?;・}")
 
 
 # 转换 Operation 到 Ren'Py 指令
@@ -22,7 +54,11 @@ def convert_operation_to_ast(operation: ws2.AbstractOperation) -> ast.Sentence:
         return ast.NextFile(file=operation.file)
     if isinstance(operation, ws2.ShowChoice):
         return ast.Menu(operation=operation)
-    if isinstance(operation, ws2.DisplayMessage) and (message := operation.message.removesuffix("%K%P").replace("%P", "").replace("%K", "{w}")):
+    if isinstance(operation, ws2.DisplayMessage):
+        if not (message := operation.message.removesuffix("%K%P").replace("%P", "").replace("%K", "{w}")):
+            return
+        message = re.sub(HIGHLIGHT_TEXT_EXPRESSION, r"{size=*1.5}\1{/size}", message)
+        message = re.sub(DOT_TEXT_EXPRESSION, r"{dot}\1{/dot}", message)
         return ast.DisplayMessage(message=message)
     if isinstance(operation, ws2.SetDisplayName):
         return ast.SetDisplayName(character_name=operation.character_name.removeprefix("%LC"))
@@ -199,7 +235,7 @@ def convert_ast_to_renpy(current_script: str, article: SentenceArticle) -> str:
     new_article = [(pointer, [sentence.compile(environment) for sentence in sentences]) for pointer, sentences in new_article]
 
     # 写成 Ren'Py 脚本
-    script = f"label {current_script}__start:\n    jump {current_script}__pointer_{article[0][0]}\n\n"
+    script = SCRIPT_BLOCK.format(current_script=current_script, start_pointer=article[0][0])
     for pointer, sentences in new_article:
         script += f"label {current_script}__pointer_{pointer}:\n"
         for sentence in sentences:
@@ -232,19 +268,22 @@ def main(args: argparse.Namespace):
 
     # 初始化游戏脚本
     renpy_script_path = args.output_script_path or (args.project_dir / "game/script.rpy")
-    renpy_script_path.write_text(f"define config.old_substitutions = False\ndefine config.safe_text = True\n\nlabel start:\n    jump {args.entry_script}__start\n\n", encoding="utf-8")
+    renpy_script_path.write_text(SCRIPT_START.format(entry_script=args.entry_script), encoding="utf-8")
 
     # 从入口脚本开始读取脚本
     scripts_to_convert: set[str] = {args.entry_script}
     converted_scripts: set[str] = set()
+    missing_scripts: set[str] = set()
+    progress_bar = tqdm(total=1)
 
-    while (remaining_scripts := scripts_to_convert - converted_scripts):
+    while (remaining_scripts := scripts_to_convert - missing_scripts - converted_scripts):
         # 获取当前要处理的脚本
         current_script = remaining_scripts.pop()
         script_path = args.script_dir / f"{current_script}.ws2"
+
+        # 如果脚本不存在，则跳过
         if not script_path.exists():
-            print(f"[Warning] 未找到脚本: {script_path}")
-            converted_scripts.add(current_script)
+            missing_scripts.add(current_script)
             continue
 
         # 将脚本解析成一系列操作
@@ -276,7 +315,7 @@ def main(args: argparse.Namespace):
         # 删除无意义的跳转
         article = ArticleFilter.remove_jump_to_next_pointer(article)
 
-        # 添加涉及到的脚本到待解析列表
+        # 添加涉及到的脚本到待解析列表，并更新进度条
         for _, sentence in article:
             if isinstance(sentence, ast.NextFile):
                 scripts_to_convert.add(sentence.file)
@@ -284,14 +323,20 @@ def main(args: argparse.Namespace):
                 for choice in sentence.operation.choices:
                     if isinstance(choice, ws2.ShowChoice.ChoiceFile):
                         scripts_to_convert.add(choice.file)
+        progress_bar.total = len(scripts_to_convert - missing_scripts)
 
         # 将句子组成段落并编译成 Ren'Py 脚本，写入文件
         script = convert_ast_to_renpy(current_script, article)
         with open(renpy_script_path, "a", encoding="utf-8") as f:
             f.write(script)
 
-        # 添加到已转换脚本集合
+        # 添加到已转换脚本集合，并更新进度条
         converted_scripts.add(current_script)
+        progress_bar.update()
+    progress_bar.close()
+
+    if missing_scripts:
+        print(f"[Warning] 未找到脚本: {', '.join(missing_scripts)}")
 
 
 if __name__ == "__main__":

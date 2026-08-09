@@ -9,6 +9,7 @@
 # 你应该随程序获得一份 GNU Affero 通用公共许可证的复本。如果没有，请看 <https://www.gnu.org/licenses/agpl.html>。
 
 from abc import ABC, abstractmethod
+from functools import lru_cache
 from typing import Any, TypeVar
 from pydantic import BaseModel, ConfigDict, Field
 from utils import ws2
@@ -18,7 +19,7 @@ from utils import ws2
 class ASTCompileEnvironment(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    available_pointers: list[ws2.Pointer]
+    available_pointers: tuple[ws2.Pointer, ...]
     script_name: str
 
 
@@ -37,6 +38,7 @@ class Component[T](BaseModel, ABC):
 class EnvironmentConstant(Component[T]):
     name: str
 
+    @lru_cache()
     def compile(self, environment: ASTCompileEnvironment) -> T:
         return getattr(environment, self.name)
 
