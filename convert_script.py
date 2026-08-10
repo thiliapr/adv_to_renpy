@@ -11,6 +11,8 @@
 import re
 import pathlib
 import argparse
+from functools import lru_cache
+from pydantic import BaseModel
 from tqdm import tqdm
 from decompile import decompile_script
 from utils import ast, ws2
@@ -78,11 +80,12 @@ def convert_operation_to_ast(operation: ws2.AbstractOperation) -> ast.Sentence:
 
 
 # 辅助工具
-SentenceArticle = list[tuple[ws2.Pointer, ast.Sentence]]
-ParagraphArticle = list[tuple[ws2.Pointer, list[ast.Sentence]]]
+SentenceArticle = tuple[tuple[ws2.Pointer, ast.Sentence], ...]
+ParagraphArticle = tuple[tuple[ws2.Pointer, list[ast.Sentence]], ...]
 
 class ArticleFilter:
     @staticmethod
+    @lru_cache()
     def get_real_pointer(article: SentenceArticle, pointer: ws2.Pointer) -> ws2.Pointer:
         return ast.JumpPointer(target_pointer=pointer).compile(ast.ASTCompileEnvironment(available_pointers=list(zip(*article))[0], script_name="thread_jump"))
 
@@ -104,21 +107,7 @@ class ArticleFilter:
 
             new_article.append((pointer, sentence))
 
-        return new_article
-
-    @staticmethod
-    def merge_message_name_display(article: SentenceArticle) -> SentenceArticle:
-        new_article = []
-        last_display_name = ""
-        for pointer, sentence in article:
-            if isinstance(sentence, ast.SetDisplayName):
-                # 合并设定显示名称和显示消息
-                last_display_name = sentence.character_name
-                continue
-            if isinstance(sentence, ast.DisplayMessage):
-                sentence = ast.DisplayMessage(character_name=f'"{last_display_name}"' if last_display_name else "", message=sentence.message)
-            new_article.append((pointer, sentence))
-        return new_article
+        return tuple(new_article)
 
     @staticmethod
     def remove_non_exist_background(article: SentenceArticle, images_dir: list[str]) -> SentenceArticle:
@@ -127,7 +116,7 @@ class ArticleFilter:
             if isinstance(sentence, ast.SetBackground) and not (images_dir / sentence.file).exists():
                 continue
             new_article.append((pointer, sentence))
-        return new_article
+        return tuple(new_article)
 
     @staticmethod
     def remove_jump_to_next_pointer(article: SentenceArticle) -> SentenceArticle:
@@ -142,63 +131,122 @@ class ArticleFilter:
             if isinstance(sentence, ast.Jump) and index + 1 < len(article) and article[index + 1][0] == ArticleFilter.get_real_pointer(article, sentence.pointer):
                 continue
             new_article.append((pointer, sentence))
-        return new_article
+        return tuple(new_article)
 
     @staticmethod
-    def clean_dead_code(article: SentenceArticle) -> SentenceArticle:
-        pointer_to_index = {pointer: index for index, (pointer, _) in enumerate(article)}
-        def walk(pointer: ws2.Pointer, walked_pointer: set[ws2.Pointer]):
-            """
-            按照控制流跑一遍程序
+    def clean_useless_code(article: SentenceArticle) -> SentenceArticle:
+        class WalkContext(BaseModel):
+            current_pointer: ws2.Pointer
+            last_set_message_name: ws2.Pointer | None = None
+            last_background_file: str = "not_a_file"
 
-            Args:
-                从哪里开始跑、走过的指针
-            """
+        class WalkResult(BaseModel):
+            walked_pointer: set[ws2.Pointer] = set()
+            message_content_to_name: dict[ws2.Pointer, dict[str, set[ws2.Pointer]]] = {}
+            last_background_before_setting: dict[ws2.Pointer, set[str]] = {}
+
+        pointer_to_index = {pointer: index for index, (pointer, _) in enumerate(article)}
+        def walk(context: WalkContext, result: WalkResult):
+            # 走过了地区不要再走一遍
             try:
-                if (pointer := ArticleFilter.get_real_pointer(article, pointer)) in walked_pointer:
+                context.current_pointer = ArticleFilter.get_real_pointer(article, context.current_pointer)
+                if context.current_pointer in result.walked_pointer:
                     return
             except ValueError:
                 return
 
             # 按照指令跑一下程序
-            index = pointer_to_index[pointer]
+            index = pointer_to_index[context.current_pointer]
             while index < len(article):
                 pointer, sentence = article[index]
-                walked_pointer.add(pointer)
+                result.walked_pointer.add(pointer)
+
+                # 记录消息的角色名称设定、内容显示
+                if isinstance(sentence, ast.SetDisplayName):
+                    context.last_set_message_name = pointer
+                elif isinstance(sentence, ast.DisplayMessage):
+                    result.message_content_to_name.setdefault(pointer, {})
+                    if context.last_set_message_name:
+                        result.message_content_to_name[pointer].setdefault(article[pointer_to_index[context.last_set_message_name]][1].character_name, set()).add(context.last_set_message_name)
+
+                # 记录背景图形的设定
+                elif isinstance(sentence, ast.SetBackground):
+                    result.last_background_before_setting.setdefault(pointer, set()).add(context.last_background_file)
+                    context.last_background_file = sentence.file
 
                 # 如果是无条件跳转，跳转到指定位置
-                if isinstance(sentence, ast.Jump):
+                elif isinstance(sentence, ast.Jump):
                     index = pointer_to_index[ArticleFilter.get_real_pointer(article, sentence.pointer)]
                     continue
                 if isinstance(sentence, ast.NextFile):
                     break
 
-                # 有条件跳转时，分出 3 条路。ConditionLong 有可能不跳转，所以现在继续走吧
+                # 有条件跳转时，分叉出 3 条路——pointer1、pointer2、原指针下继续
                 if isinstance(sentence, ast.UnknownSentence) and isinstance(sentence.operation, (ws2.ConditionLong, ws2.ConditionalJump)):
-                    walk(sentence.operation.pointer1, walked_pointer)
-                    walk(sentence.operation.pointer2, walked_pointer)
+                    for pointer in [sentence.operation.pointer1, sentence.operation.pointer2]:
+                        walk(context.model_copy(update={"current_pointer": pointer}), result)
 
-                # 如果是菜单，分出 N 条路。ShowChoice 肯定跳到不知到哪里去，现在别走了
+                # 如果是菜单，分叉出 N 条路。ShowChoice 肯定跳到不知到哪里去，现在别走了
                 if isinstance(sentence, ast.Menu):
                     for choice in sentence.operation.choices:
                         if isinstance(choice, ws2.ShowChoice.ChoicePointer):
-                            walk(choice.pointer, walked_pointer)
+                            walk(context.model_copy(update={"current_pointer": choice.pointer}), result)
                     break
 
                 # 下一条指令
                 index += 1
 
         # 按照控制流跑一遍程序
-        walked_pointer = set()
-        walk(article[0][0], walked_pointer)
+        result = WalkResult()
+        walk(WalkContext(current_pointer=article[0][0]), result)
 
-        # 过滤掉死代码（没有跑过的指针）
+        # 处理收集到的数据、整理出有用的 SetDisplayName
+        useful_name_setting = set(
+            name_setting
+            for name_setting_per_content in result.message_content_to_name.values() if len(name_setting_per_content) > 1
+            for name_setting_per_name in name_setting_per_content.values()
+            for name_setting in name_setting_per_name
+        )
+
+        # 过滤掉死代码（没有跑过的指针）、没用的背景切换
         new_article = []
         for pointer, sentence in article:
-            if pointer not in walked_pointer:
+            if pointer not in result.walked_pointer:
                 continue
+
+            # 合并消息的名称和内容、过滤掉无用的 SetDisplayName
+            if pointer in result.message_content_to_name and len(character_name := result.message_content_to_name[pointer]) <= 1:
+                # 因为 Ren'Py 支持变量角色名，所以要用 "" 包括表示这是一个字面量
+                new_article.append((pointer, sentence.model_copy(update={"character_name": f'"{list(character_name.keys())[0]}"' if character_name else ""})))
+                continue
+            if isinstance(sentence, ast.SetDisplayName) and pointer not in useful_name_setting:
+                continue
+
+            # 删除没变化的背景变化指令
+            if isinstance(sentence, ast.SetBackground) and result.last_background_before_setting[pointer] == {sentence.file}:
+                continue
+
+            # 一般指令
             new_article.append((pointer, sentence))
-        return new_article
+        return tuple(new_article)
+
+    def remove_repetitive_sound_effect(article: SentenceArticle):
+        new_article = []
+        last_sound_effect = None
+        for pointer, sentence in article:
+            # 跳过同一时间出现的相同音效
+            if isinstance(sentence, ast.SoundEffect):
+                if sentence == last_sound_effect:
+                    continue
+                last_sound_effect = sentence
+
+            # 显示消息需要时间，可以出现和上次相同的音效了
+            if isinstance(sentence, ast.DisplayMessage):
+                last_sound_effect = None
+
+            # 加入指令列表
+            new_article.append((pointer, sentence))
+        return tuple(new_article)
 
 
 # 写成 Ren'Py 脚本
@@ -220,12 +268,13 @@ def convert_ast_to_renpy(current_script: str, article: SentenceArticle) -> str:
                 pointers_may_jump_to.add(sentence.operation.pointer2)
 
     # 合并没有被跳转到的单行指令成为一个连续的段落
-    new_article: ParagraphArticle = []
+    new_article = []
     for pointer, sentence in article:
         if pointer in pointers_may_jump_to:
             new_article.append((pointer, [sentence]))
             continue
         new_article[-1][1].append(sentence)
+    new_article: ParagraphArticle = tuple(new_article)
 
     # 编译句子
     environment = ast.ASTCompileEnvironment(
@@ -304,14 +353,14 @@ def main(args: argparse.Namespace):
         # 处理在 skip 和正常模式下的分支，采用正常模式
         article = ArticleFilter.decide_skip_condition(article)
 
-        # 合并显示名称和消息
-        article = ArticleFilter.merge_message_name_display(article)
-
         # 删除不存在的背景切换指令
         article = ArticleFilter.remove_non_exist_background(article, args.project_dir / "game/images")
 
-        # 删除死代码
-        article = ArticleFilter.clean_dead_code(article)
+        # 删除无用代码
+        article = ArticleFilter.clean_useless_code(article)
+
+        # 删除重复音效
+        article = ArticleFilter.remove_repetitive_sound_effect(article)
 
         # 删除无意义的跳转
         article = ArticleFilter.remove_jump_to_next_pointer(article)

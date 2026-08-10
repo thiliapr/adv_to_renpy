@@ -114,9 +114,9 @@ class DisplayMessage(Sentence):
 
     def components(self) -> list[str]:
         return [
-            f'{self.character_name} "{self.message}"'
-            if self.character_name else
             f'"{self.message}"'
+            if self.character_name in [None, "", "''", '""'] else
+            f'{self.character_name} "{self.message}"'
         ]
 
 
