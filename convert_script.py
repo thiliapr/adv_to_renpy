@@ -253,19 +253,18 @@ class ArticleFilter:
 def convert_ast_to_renpy(current_script: str, article: SentenceArticle) -> str:
     # 记录可能会被跳转到的指针
     pointers_may_jump_to = {article[0][0]}  # 第一个指针是这个脚本的入口，script__start 会跳转到这个入口
+    add_pointers_may_jump_to = lambda pointer: pointers_may_jump_to.add(ArticleFilter.get_real_pointer(article, pointer))
     for pointer, sentence in article:
         if isinstance(sentence, ast.Jump):
-            pointers_may_jump_to.add(sentence.pointer)
+            add_pointers_may_jump_to(sentence.pointer)
         elif isinstance(sentence, ast.Menu):
             for choice in sentence.operation.choices:
                 if isinstance(choice, ws2.ShowChoice.ChoicePointer):
-                    pointers_may_jump_to.add(choice.pointer)
-        elif isinstance(sentence, ast.UnknownSentence):
-            if isinstance(sentence.operation, (ws2.Jump1, ws2.Jump2)):
-                pointers_may_jump_to.add(sentence.operation.pointer)
-            elif isinstance(sentence.operation, (ws2.ConditionLong, ws2.ConditionalJump)):
-                pointers_may_jump_to.add(sentence.operation.pointer1)
-                pointers_may_jump_to.add(sentence.operation.pointer2)
+                    add_pointers_may_jump_to(choice.pointer)
+        # elif isinstance(sentence, ast.UnknownSentence):
+        #     if isinstance(sentence.operation, (ws2.ConditionLong, ws2.ConditionalJump)):
+        #         add_pointers_may_jump_to(sentence.operation.pointer1)
+        #         add_pointers_may_jump_to(sentence.operation.pointer2)
 
     # 合并没有被跳转到的单行指令成为一个连续的段落
     new_article = []
