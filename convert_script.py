@@ -12,8 +12,8 @@ import re
 import pathlib
 import argparse
 from functools import lru_cache
-from pydantic import BaseModel
 from tqdm import tqdm
+from pydantic import BaseModel, ConfigDict
 from decompile import decompile_script
 from utils import ast, ws2
 
@@ -135,31 +135,44 @@ class ArticleFilter:
 
     @staticmethod
     def clean_useless_code(article: SentenceArticle) -> SentenceArticle:
+        class WalkPath(BaseModel):
+            model_config = ConfigDict(frozen=True)
+            current_pointer: ws2.Pointer
+            last_set_message_name: ws2.Pointer | None
+            last_background_file: str
+
         class WalkContext(BaseModel):
             current_pointer: ws2.Pointer
             last_set_message_name: ws2.Pointer | None = None
             last_background_file: str = "not_a_file"
 
         class WalkResult(BaseModel):
-            walked_pointer: set[ws2.Pointer] = set()
+            walked_path: set[WalkPath] = set()
             message_content_to_name: dict[ws2.Pointer, dict[str, set[ws2.Pointer]]] = {}
             last_background_before_setting: dict[ws2.Pointer, set[str]] = {}
 
         pointer_to_index = {pointer: index for index, (pointer, _) in enumerate(article)}
+        def get_walk_path(context: WalkContext) -> WalkPath:
+            return WalkPath.model_validate(context.model_dump())
+
         def walk(context: WalkContext, result: WalkResult):
-            # 走过了地区不要再走一遍
+            # 更新为实际指针
             try:
                 context.current_pointer = ArticleFilter.get_real_pointer(article, context.current_pointer)
-                if context.current_pointer in result.walked_pointer:
-                    return
             except ValueError:
                 return
 
             # 按照指令跑一下程序
             index = pointer_to_index[context.current_pointer]
             while index < len(article):
+                # 获取当前指令对应的 context
                 pointer, sentence = article[index]
-                result.walked_pointer.add(pointer)
+                context = context.model_copy(update={"current_pointer": pointer})
+
+                # 不走回头路，初见就标记这条路走过了
+                if get_walk_path(context) in result.walked_path:
+                    return
+                result.walked_path.add(get_walk_path(context))
 
                 # 记录消息的角色名称设定、内容显示
                 if isinstance(sentence, ast.SetDisplayName):
@@ -200,18 +213,22 @@ class ArticleFilter:
         result = WalkResult()
         walk(WalkContext(current_pointer=article[0][0]), result)
 
-        # 处理收集到的数据、整理出有用的 SetDisplayName
-        useful_name_setting = set(
+        # 处理收集到的数据、整理出活着的代码和有用的 SetDisplayName
+        walked_pointer = {
+            path.current_pointer
+            for path in result.walked_path
+        }
+        useful_name_setting = {
             name_setting
             for name_setting_per_content in result.message_content_to_name.values() if len(name_setting_per_content) > 1
             for name_setting_per_name in name_setting_per_content.values()
             for name_setting in name_setting_per_name
-        )
+        }
 
         # 过滤掉死代码（没有跑过的指针）、没用的背景切换
         new_article = []
         for pointer, sentence in article:
-            if pointer not in result.walked_pointer:
+            if pointer not in walked_pointer:
                 continue
 
             # 合并消息的名称和内容、过滤掉无用的 SetDisplayName
@@ -353,7 +370,8 @@ def main(args: argparse.Namespace):
         article = ArticleFilter.decide_skip_condition(article)
 
         # 删除不存在的背景切换指令
-        article = ArticleFilter.remove_non_exist_background(article, args.project_dir / "game/images")
+        if args.only_exist_background:
+            article = ArticleFilter.remove_non_exist_background(article, args.project_dir / "game/images")
 
         # 删除无用代码
         article = ArticleFilter.clean_useless_code(article)
