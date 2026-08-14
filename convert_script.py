@@ -135,16 +135,13 @@ class ArticleFilter:
 
     @staticmethod
     def clean_useless_code(article: SentenceArticle) -> SentenceArticle:
-        class WalkPath(BaseModel):
-            model_config = ConfigDict(frozen=True)
-            current_pointer: ws2.Pointer
-            last_set_message_name: ws2.Pointer | None
-            last_background_file: str
-
         class WalkContext(BaseModel):
             current_pointer: ws2.Pointer
             last_set_message_name: ws2.Pointer | None = None
             last_background_file: str = "not_a_file"
+
+        class WalkPath(WalkContext):
+            model_config = ConfigDict(frozen=True)
 
         class WalkResult(BaseModel):
             walked_path: set[WalkPath] = set()
