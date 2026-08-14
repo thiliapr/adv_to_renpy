@@ -42,12 +42,7 @@ class AbstractOperation(BaseModel, ABC):
     model_config = ConfigDict(frozen=True)
     operation_code: ClassVar[OperationCode]
 
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
-
-        if "parse_from_program" in cls.__dict__:
-            cls.parse_from_program = classmethod(cls.parse_from_program)
-
+    @classmethod
     @abstractmethod
     def parse_from_program(cls: Self, ctx: ProgramDecompileContext) -> "OperationDecompileResult":
         ...
@@ -73,18 +68,13 @@ class DeclarativeOperation(AbstractOperation, ABC):
             "size_of_operation" / Tell
         )
 
+    @classmethod
     def parse_from_program(cls: Self, ctx: ProgramDecompileContext) -> OperationDecompileResult:
         result = cls.compiled_schema(ctx.environment).parse(ctx.program[ctx.current_pointer:])
         return OperationDecompileResult(
             operation=cls(**{key: getattr(result, key) for key in cls.model_fields}),
             new_pointer=ctx.current_pointer + result.size_of_operation
         )
-
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
-
-        if "get_scheme" in cls.__dict__:
-            cls.payload_schema = staticmethod(cls.payload_schema)
 
     @abstractmethod
     def payload_schema(env: ProgramDecompileEnvironment) -> Struct:
